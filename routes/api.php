@@ -25,107 +25,124 @@ use App\Http\Controllers\Api\{
 };
 
 /* ---------- helpers kecil ---------- */
-function table_has_col(string $table, string $col): bool {
-    try { return Schema::hasColumn($table, $col); } catch (\Throwable $e) { return false; }
+if (!function_exists('table_has_col')) {
+    function table_has_col(string $table, string $col): bool {
+        try { return Schema::hasColumn($table, $col); } catch (\Throwable $e) { return false; }
+    }
 }
-function pick_auth_table(): ?string {
-    if (Schema::hasTable('users'))    return 'users';
-    if (Schema::hasTable('customer')) return 'customer';
-    if (Schema::hasTable('pelanggan'))return 'pelanggan';
-    return null;
+
+if (!function_exists('pick_auth_table')) {
+    function pick_auth_table(): ?string {
+        if (Schema::hasTable('users'))    return 'users';
+        if (Schema::hasTable('customer')) return 'customer';
+        if (Schema::hasTable('pelanggan'))return 'pelanggan';
+        return null;
+    }
 }
-/** Cari jadwal kanonik untuk slot (studio+tanggal+jam_mulai) */
-function canonical_jadwal(int $jadwalId): array {
-    $jd = DB::table('jadwal')->where('jadwal_id',$jadwalId)->first();
-    if (!$jd) return [null, [], null];
-    $ids = DB::table('jadwal')
-        ->where('studio_id', $jd->studio_id)
-        ->where('tanggal',   $jd->tanggal)
-        ->where('jam_mulai', $jd->jam_mulai)
-        ->orderBy('jadwal_id')
-        ->pluck('jadwal_id')->all();
-    if (empty($ids)) return [null, [], null];
-    $canonId = (int)min($ids);
-    return [$canonId, $ids, $jd];
+
+if (!function_exists('canonical_jadwal')) {
+    /** Cari jadwal kanonik untuk slot (studio+tanggal+jam_mulai) */
+    function canonical_jadwal(int $jadwalId): array {
+        $jd = DB::table('jadwal')->where('jadwal_id',$jadwalId)->first();
+        if (!$jd) return [null, [], null];
+        $ids = DB::table('jadwal')
+            ->where('studio_id', $jd->studio_id)
+            ->where('tanggal',   $jd->tanggal)
+            ->where('jam_mulai', $jd->jam_mulai)
+            ->orderBy('jadwal_id')
+            ->pluck('jadwal_id')->all();
+        if (empty($ids)) return [null, [], null];
+        $canonId = (int)min($ids);
+        return [$canonId, $ids, $jd];
+    }
 }
 
 /* helper tambahan */
-function auth_pk_col(string $table): string {
-    // Prioritas cek nama kolom PK yang mungkin dipakai oleh project:
-    foreach (['id_users','users_id','id','user_id','usersid','customer_id'] as $col) {
-        if (table_has_col($table, $col)) return $col;
-    }
-    return 'id';
-}
-
-function table_smallest_missing_pk(string $table, string $pk): int {
-    // cari nilai integer terkecil >0 yang belum ada di kolom $pk
-    $rows = DB::table($table)->pluck($pk)->toArray();
-    $set = [];
-    foreach ($rows as $v) {
-        if (is_numeric($v)) $set[(int)$v] = true;
-    }
-    $i = 1;
-    while (true) {
-        if (!isset($set[$i])) return $i;
-        $i++;
-    }
-}
-
-function table_insert_with_pk(string $table, array $data) {
-    $pk = auth_pk_col($table);
-    try {
-        return DB::table($table)->insertGetId($data, $pk);
-    } catch (\Throwable $e) {
-        // jika gagal karena kolom PK tidak auto increment / butuh explicit value,
-        // coba isi dengan smallest missing PK (mengisi gap)
-        try {
-            if (!array_key_exists($pk, $data)) {
-                $available = table_smallest_missing_pk($table, $pk);
-                $data[$pk] = $available;
-                DB::table($table)->insert($data);
-                return $data[$pk];
-            }
-        } catch (\Throwable $_) {
-            // fallback lama: next pk (max+1)
-            if (!array_key_exists($pk, $data)) {
-                $max = DB::table($table)->max($pk);
-                $data[$pk] = (is_numeric($max) ? ((int)$max + 1) : 1);
-                DB::table($table)->insert($data);
-                return $data[$pk];
-            }
+if (!function_exists('auth_pk_col')) {
+    function auth_pk_col(string $table): string {
+        // Prioritas cek nama kolom PK yang mungkin dipakai oleh project:
+        foreach (['id_users','users_id','id','user_id','usersid','customer_id'] as $col) {
+            if (table_has_col($table, $col)) return $col;
         }
-        throw $e;
+        return 'id';
     }
 }
-function ensure_admin_user(string $table): void {
-    if (!table_has_col($table,'username') || !table_has_col($table,'password')) return;
-    $pk = auth_pk_col($table);
-    $admin = DB::table($table)->where('username','admin')->first();
-    if (!$admin) {
-        // tidak membuat akun baru; biarkan login gagal jika user tidak ada
-        return;
-    }
-    $now = now();
-    $base = [
-        'username' => 'admin',
-        'password' => Hash::make('admin123'),
-    ];
-    if (table_has_col($table,'name'))  $base['name'] = 'Administrator';
-    if (table_has_col($table,'email')) $base['email'] = 'admin@bioskop.local';
-    if (table_has_col($table,'role'))  $base['role'] = 'admin';
-    if (table_has_col($table,'api_token')) $base['api_token'] = Str::random(40);
-    if (table_has_col($table,'created_at')) $base['created_at'] = $now;
-    if (table_has_col($table,'updated_at')) $base['updated_at'] = $now;
 
-    $needsRole = table_has_col($table,'role') && ($admin->role ?? '') !== 'admin';
-    $needsToken = table_has_col($table,'api_token') && empty($admin->api_token);
-    if ($needsRole || $needsToken) {
-        $updates = [];
-        if ($needsRole)  $updates['role'] = 'admin';
-        if ($needsToken) $updates['api_token'] = Str::random(40);
-        if (table_has_col($table,'updated_at')) $updates['updated_at'] = $now;
-        DB::table($table)->where($pk, $admin->{$pk})->update($updates);
+if (!function_exists('table_smallest_missing_pk')) {
+    function table_smallest_missing_pk(string $table, string $pk): int {
+        // cari nilai integer terkecil >0 yang belum ada di kolom $pk
+        $rows = DB::table($table)->pluck($pk)->toArray();
+        $set = [];
+        foreach ($rows as $v) {
+            if (is_numeric($v)) $set[(int)$v] = true;
+        }
+        $i = 1;
+        while (true) {
+            if (!isset($set[$i])) return $i;
+            $i++;
+        }
+    }
+}
+
+if (!function_exists('table_insert_with_pk')) {
+    function table_insert_with_pk(string $table, array $data) {
+        $pk = auth_pk_col($table);
+        try {
+            return DB::table($table)->insertGetId($data, $pk);
+        } catch (\Throwable $e) {
+            // jika gagal karena kolom PK tidak auto increment / butuh explicit value,
+            // coba isi dengan smallest missing PK (mengisi gap)
+            try {
+                if (!array_key_exists($pk, $data)) {
+                    $available = table_smallest_missing_pk($table, $pk);
+                    $data[$pk] = $available;
+                    DB::table($table)->insert($data);
+                    return $data[$pk];
+                }
+            } catch (\Throwable $_) {
+                // fallback lama: next pk (max+1)
+                if (!array_key_exists($pk, $data)) {
+                    $max = DB::table($table)->max($pk);
+                    $data[$pk] = (is_numeric($max) ? ((int)$max + 1) : 1);
+                    DB::table($table)->insert($data);
+                    return $data[$pk];
+                }
+            }
+            throw $e;
+        }
+    }
+}
+
+if (!function_exists('ensure_admin_user')) {
+    function ensure_admin_user(string $table): void {
+        if (!table_has_col($table,'username') || !table_has_col($table,'password')) return;
+        $pk = auth_pk_col($table);
+        $admin = DB::table($table)->where('username','admin')->first();
+        if (!$admin) {
+            // tidak membuat akun baru; biarkan login gagal jika user tidak ada
+            return;
+        }
+        $now = now();
+        $base = [
+            'username' => 'admin',
+            'password' => Hash::make('admin123'),
+        ];
+        if (table_has_col($table,'name'))  $base['name'] = 'Administrator';
+        if (table_has_col($table,'email')) $base['email'] = 'admin@bioskop.local';
+        if (table_has_col($table,'role'))  $base['role'] = 'admin';
+        if (table_has_col($table,'api_token')) $base['api_token'] = Str::random(40);
+        if (table_has_col($table,'created_at')) $base['created_at'] = $now;
+        if (table_has_col($table,'updated_at')) $base['updated_at'] = $now;
+
+        $needsRole = table_has_col($table,'role') && ($admin->role ?? '') !== 'admin';
+        $needsToken = table_has_col($table,'api_token') && empty($admin->api_token);
+        if ($needsRole || $needsToken) {
+            $updates = [];
+            if ($needsRole)  $updates['role'] = 'admin';
+            if ($needsToken) $updates['api_token'] = Str::random(40);
+            if (table_has_col($table,'updated_at')) $updates['updated_at'] = $now;
+            DB::table($table)->where($pk, $admin->{$pk})->update($updates);
+        }
     }
 }
 
@@ -139,17 +156,25 @@ Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/logout', [AuthController::class, 'logout']);
 
 /* ---------- GENRES (fallback) ---------- */
-function _pick_genre_table() {
-    foreach (['genres', 'genre', 'tbl_genre'] as $t) if (Schema::hasTable($t)) return $t;
-    return null;
+if (!function_exists('_pick_genre_table')) {
+    function _pick_genre_table() {
+        foreach (['genres', 'genre', 'tbl_genre'] as $t) if (Schema::hasTable($t)) return $t;
+        return null;
+    }
 }
-function _genre_id_col($t) {
-    foreach (['genre_id', 'id', 'id_genre'] as $c) if (Schema::hasColumn($t, $c)) return $c;
-    return 'id';
+
+if (!function_exists('_genre_id_col')) {
+    function _genre_id_col($t) {
+        foreach (['genre_id', 'id', 'id_genre'] as $c) if (Schema::hasColumn($t, $c)) return $c;
+        return 'id';
+    }
 }
-function _genre_name_col($t) {
-    foreach (['nama', 'nama_genre', 'name', 'judul', 'title'] as $c) if (Schema::hasColumn($t, $c)) return $c;
-    return 'nama';
+
+if (!function_exists('_genre_name_col')) {
+    function _genre_name_col($t) {
+        foreach (['nama', 'nama_genre', 'name', 'judul', 'title'] as $c) if (Schema::hasColumn($t, $c)) return $c;
+        return 'nama';
+    }
 }
 Route::get('/genres', function () {
     $t = _pick_genre_table();
