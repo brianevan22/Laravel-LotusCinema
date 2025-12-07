@@ -511,13 +511,6 @@ Route::post('/checkout', function (Request $r) {
         ]);
     };
 
-    // Tambahkan helper $withTimestamps di sini
-    $withTimestamps = function(string $table, array $data) {
-        if (Schema::hasColumn($table, 'created_at')) $data['created_at'] = now();
-        if (Schema::hasColumn($table, 'updated_at')) $data['updated_at'] = now();
-        return $data;
-    };
-
     $paymentMethod = $r->input('payment_method') ?: 'manual_transfer';
     $paymentDestination = $r->input('payment_destination');
     $paymentAccountName = trim((string)$r->input('payment_account_name'));
@@ -528,9 +521,22 @@ Route::post('/checkout', function (Request $r) {
         ], 422));
     }
 
+    $nowForDb = $now->copy();
+
+    // Tambahkan helper $withTimestamps dengan waktu klien
+    $withTimestamps = function(string $table, array $data) use ($nowForDb) {
+        if (Schema::hasColumn($table, 'created_at') && !isset($data['created_at'])) {
+            $data['created_at'] = $nowForDb;
+        }
+        if (Schema::hasColumn($table, 'updated_at')) {
+            $data['updated_at'] = $nowForDb;
+        }
+        return $data;
+    };
+
     return DB::transaction(function () use (
         $ids, $customerForTrans, $canonId, $kasirId, $defaultPrice, $withTimestamps, $ensureKursiId, $filmId,
-        $paymentMethod, $paymentDestination, $paymentAccountName
+        $paymentMethod, $paymentDestination, $paymentAccountName, $nowForDb
     ) {
         $kursiIds = array_map($ensureKursiId, $ids);
 
@@ -566,7 +572,7 @@ Route::post('/checkout', function (Request $r) {
                 $upd['harga'] = $defaultPrice;
             }
             if (!empty($upd)) {
-                if (Schema::hasColumn('tiket','updated_at')) $upd['updated_at'] = now();
+                if (Schema::hasColumn('tiket','updated_at')) $upd['updated_at'] = $nowForDb;
                 DB::table('tiket')->where('tiket_id', $t->tiket_id)->update($upd);
                 $t->harga = $defaultPrice;
             }
@@ -579,7 +585,7 @@ Route::post('/checkout', function (Request $r) {
         $trx = [
             'customer_id'       => $customerForTrans,
             'kasir_id'          => $kasirId, // <- tersimpan sesuai waktu/request
-            'tanggal_transaksi' => now(),
+            'tanggal_transaksi' => $nowForDb,
             'total_harga'       => $total,
             'status'            => 'pending',
             'payment_method'    => $paymentMethod,
@@ -602,7 +608,7 @@ Route::post('/checkout', function (Request $r) {
             DB::table('detail_transaksi')->insert($detail);
 
             $upd = ['status' => 'terjual'];
-            if (Schema::hasColumn('tiket','updated_at')) $upd['updated_at'] = now();
+            if (Schema::hasColumn('tiket','updated_at')) $upd['updated_at'] = $nowForDb;
             DB::table('tiket')->where('tiket_id', $t->tiket_id)->update($upd);
         }
 

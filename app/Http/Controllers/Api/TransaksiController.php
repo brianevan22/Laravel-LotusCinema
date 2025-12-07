@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Transaksi;
 use App\Models\Tiket;
+use Carbon\Carbon;
 use App\Http\Resources\TransaksiResource;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -119,18 +120,39 @@ class TransaksiController extends \App\Http\Controllers\Controller
     {
         $request->validate([
             'status' => ['required', Rule::in(['pending', 'sukses', 'success', 'selesai', 'batal', 'cancel', 'canceled'])],
+            'client_time' => ['nullable', 'string'],
+            'client_tz' => ['nullable', 'string', 'max:60'],
         ]);
 
         $row = Transaksi::findOrFail($id);
         $status = $this->normalizeStatus($request->input('status')) ?? 'pending';
         $row->status = $status;
-        if ($status === 'sukses') {
-            $row->paid_at = now();
-            if (!$row->tanggal_transaksi) {
-                $row->tanggal_transaksi = $row->paid_at;
+        $clientTimeRaw = $request->input('client_time') ?? $request->header('X-Client-Time');
+        $clientTz = $request->input('client_tz') ?? $request->header('X-Client-Tz');
+        $now = now();
+        if ($clientTimeRaw) {
+            try {
+                $parsed = Carbon::parse($clientTimeRaw);
+                if ($clientTz) {
+                    try {
+                        $parsed->setTimezone($clientTz);
+                    } catch (\Throwable $e) {
+                        // ignore invalid tz
+                    }
+                }
+                $now = $parsed;
+            } catch (\Throwable $e) {
+                // fallback to server time
             }
         }
+        if ($status === 'sukses') {
+            $row->paid_at = $now;
+            $row->tanggal_transaksi = $now;
+        }
         if ($status === 'pending') {
+            $row->paid_at = null;
+        }
+        if ($status === 'batal') {
             $row->paid_at = null;
         }
         $row->save();
