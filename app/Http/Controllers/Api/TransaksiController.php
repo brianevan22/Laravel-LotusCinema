@@ -128,7 +128,7 @@ class TransaksiController extends \App\Http\Controllers\Controller
         $status = $this->normalizeStatus($request->input('status')) ?? 'pending';
         $row->status = $status;
         $clientTimeRaw = $request->input('client_time') ?? $request->header('X-Client-Time');
-        $clientTz = $request->input('client_tz') ?? $request->header('X-Client-Tz');
+        $clientTz = $request->input('client_tz') ?? $request->header('X-Client-Tz') ?? config('app.timezone', 'Asia/Jakarta');
         $now = now();
         if ($clientTimeRaw) {
             try {

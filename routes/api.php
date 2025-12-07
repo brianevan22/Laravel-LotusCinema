@@ -421,7 +421,7 @@ Route::post('/checkout', function (Request $r) {
     // ======= Tentukan kasir berdasarkan waktu (jika tidak diberikan) =======
     // Gunakan waktu klien bila tersedia: field 'client_time' (ISO8601) atau header 'X-Client-Time'
     $clientTimeRaw = $r->input('client_time') ?? $r->header('X-Client-Time') ?? null;
-    $clientTz      = $r->input('client_tz') ?? null;
+    $clientTz      = $r->input('client_tz') ?? $r->header('X-Client-Tz') ?? config('app.timezone', 'Asia/Jakarta');
 
     if ($clientTimeRaw) {
         try {
@@ -636,6 +636,8 @@ Route::post('/checkout', function (Request $r) {
             'kursi'         => $kursiDetail,
             'kursi_labels'  => implode(', ', array_map(fn($d)=>$d['nomor_kursi'], $kursiDetail)),
             'status'        => 'pending',
+            'tanggal_transaksi' => $nowForDb->copy()->toDateTimeString(),
+            'paid_at'       => null,
             'payment_method' => $paymentMethod,
             'payment_destination' => $paymentDestination,
         ]);
