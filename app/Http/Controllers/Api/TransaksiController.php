@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Transaksi;
+use App\Models\Tiket;
 use App\Http\Resources\TransaksiResource;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -133,6 +134,13 @@ class TransaksiController extends \App\Http\Controllers\Controller
             $row->paid_at = null;
         }
         $row->save();
+
+        if ($status === 'batal') {
+            $tiketIds = $row->detail()->pluck('tiket_id')->filter()->all();
+            if (!empty($tiketIds)) {
+                Tiket::whereIn('tiket_id', $tiketIds)->update(['status' => 'tersedia']);
+            }
+        }
 
         return new TransaksiResource($row->load($this->withRelations));
     }
